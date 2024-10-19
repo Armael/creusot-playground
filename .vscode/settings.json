@@ -1,0 +1,9 @@
+{
+    "rust-analyzer.check.overrideCommand": [
+        "cargo",
+        "creusot",
+        "--",
+        "--message-format=json"
+    ],
+    "creusot.lspPath": "/home/armael/recherche/creusot/_opam/bin/creusot-lsp"
+}
