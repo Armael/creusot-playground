@@ -20,22 +20,17 @@ impl<T> Invariant for List<T> {
     #[open]
     #[predicate]
     fn invariant(self) -> bool { pearlite! {
-        ( // `first` and `last` are correct
-          (*self.seq == Seq::EMPTY &&
-           self.first.is_null_logic() &&
-           self.last.is_null_logic())    // xxx ".first."
-          ||
-          (self.seq.len() > 0 &&
-           self.seq.inner_logic()[0].ptr == self.first &&
-           self.seq.inner_logic()[self.seq.inner_logic().len() - 1].ptr == self.last)
-        ) && (
-          // the cells in `seq` are chained properly
-          forall<i:Int> 0 <= i && i < self.seq.inner_logic().len() ==> {
-            let cell_i /* Cell<T> */ = self.seq.inner_logic()[i].val;
-            (i == self.seq.inner_logic().len() - 1 && cell_i.next.is_null_logic()) ||
-            (i <  self.seq.inner_logic().len() - 1 && cell_i.next == self.seq.inner_logic()[i+1].ptr)
-          }
-        )
+        (*self.seq == Seq::EMPTY &&
+         self.first.is_null_logic() &&
+         self.last.is_null_logic())
+        ||
+        (self.seq.len() > 0 &&
+         self.first == self.seq.inner_logic()[0].ptr &&
+         self.last  == self.seq.inner_logic()[self.seq.inner_logic().len() - 1].ptr &&
+         // the cells in `seq` are chained properly
+         (forall<i:Int> 0 <= i && i < self.seq.inner_logic().len() - 1 ==>
+             self.seq[i].val.next == self.seq[i+1].ptr) &&
+         self.seq[self.seq.len() - 1].val.next.is_null_logic())
     }}
 }
 
@@ -55,15 +50,22 @@ impl<T> View for List<T> {
     }}
 }
 
-// #[trusted]
-// #[pure]
-// #[ensures(*result == 1)]
-// fn one() -> GhostBox<Int> { #[allow(unreachable_code)] { ghost!{loop{}} } }
-
 #[trusted]
 #[pure]
 #[ensures(result == x - 1)]
 fn minus_one(x: Int) -> Int { #[allow(unreachable_code)] { loop{} } }
+
+// weird syntax error "trigger must be tuples" without the stray comma
+// when trying to add #![trigger seq_map(Seq::push_front(y, s), f),]
+#[pure]
+#[ensures(forall<y: T, s: Seq<T>, f: logic::Mapping<T,U>>
+    seq_map(Seq::push_front(y, s), f) == Seq::push_front(f.get(y), seq_map(s, f)))]
+fn seq_map_cons<T,U>() {}
+
+#[pure]
+#[ensures(forall<y: T, s: Seq<T>, f: logic::Mapping<T,U>>
+    seq_map(s.push(y), f) == seq_map(s, f).push(f.get(y)))]
+fn seq_map_snoc<T,U>() {}
 
 impl<T> List<T> {
     #[ensures(result@ == Seq::EMPTY)]
@@ -150,21 +152,46 @@ impl<T> List<T> {
             cell_last.next = cell_ptr;
             self.last = cell_ptr;
         }
+        seq_map_snoc::<GhostPtrOwn<Cell<T>>, T>();
     }
 
     #[ensures((^self)@ == Seq::push_front(x, (*self)@))]
     pub fn push_front(&mut self, x: T) {
+        // let self0 = snapshot!{ *self };
+        // proof_assert!{ (*self)@ == (*self0)@ };
         let cell = Box::new(Cell { v: x, next: self.first });
-        let cell_s = snapshot!{ *cell };
+        // let cell_s = snapshot!{ *cell };
         let (cell_ptr, cell_own) = gptr::from_box(cell);
-        proof_assert!{ *cell_s == cell_own.val };
+        // proof_assert!{ *cell_s == cell_own.val };
+        // proof_assert!{ !cell_ptr.is_null_logic() };
         self.first = cell_ptr;
         if self.last.is_null() {
             self.last = cell_ptr;
         }
+        // let seq0 = snapshot!{ self.seq.inner_logic() };
         let mut seq = self.seq.borrow_mut();
-        let seq0 = snapshot!{ *seq.inner_logic() };
-        ghost!{ seq.push_ghost(cell_own.into_inner()) };
-        proof_assert!{ **seq == Seq::push_front(GhostPtrOwn { val: *cell_s, ptr: cell_ptr }, *seq0) };
+        ghost!{ seq.push_front_ghost(cell_own.into_inner()) };
+        // proof_assert!{ ^seq.inner_logic() == Seq::push_front(*cell_own, *seq0) };
+        // proof_assert!{ ^seq.inner_logic() == Seq::push_front(*cell_own, *self0.seq) };
+        // proof_assert!{ (^self).first == cell_ptr && (^self).seq.inner_logic() == ^seq.inner_logic() };
+        // proof_assert!{ (^self).seq.inner_logic() == Seq::push_front(*cell_own, *self0.seq) };
+        // proof_assert!{ seq_map((^self).seq.inner_logic(), |p: GhostPtrOwn<Cell<T>>| p.val.v) ==
+        //                seq_map(Seq::push_front(*cell_own, *self0.seq), |p: GhostPtrOwn<Cell<T>>| p.val.v) };
+        // proof_assert!{ (^self)@ ==
+        //                seq_map(Seq::push_front(*cell_own, *self0.seq), |p: GhostPtrOwn<Cell<T>>| p.val.v) };
+
+        seq_map_cons::<GhostPtrOwn<Cell<T>>, T>();
+
+        // proof_assert!{ (^self)@ ==
+        //                Seq::push_front(cell_own.val.v,
+        //                  seq_map(*self0.seq, |p: GhostPtrOwn<Cell<T>>| p.val.v)) };
+        // proof_assert!{ (^self)@ ==
+        //                Seq::push_front(x,
+        //                  seq_map(*self0.seq, |p: GhostPtrOwn<Cell<T>>| p.val.v)) };
+        // proof_assert!{ (^self)@ ==
+        //                Seq::push_front(x,
+        //                  seq_map(self0.seq.inner_logic(), |p: GhostPtrOwn<Cell<T>>| p.val.v)) };
+        // proof_assert!{ (^self)@ ==
+        //                Seq::push_front(x, (*self0)@) };
     }
 }
